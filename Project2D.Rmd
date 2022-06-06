@@ -1,0 +1,139 @@
+---
+title: "Project 2D"
+output: html_notebook
+---
+
+Background: How do experiences shape the development of the brain? Previous studies show that the firing of action potentials in neurons in response to some external stimulus initiates a cascade of activity-dependent changes in gene expression across the brain. Such changes are not merely transient, and thus may hold important implications for learning and long-term memory formation, both processes whose molecular mechanisms still remain largely unclear to this day. Researchers have successfully identified transcription factors whose expression gets up-regulated in response to neuronal activity, and who seem to be implicated in a series of neurodevelopmental processes. However, there is little pre-existing literature on genes whose transcription gets down-regulated in response to activity. Here, we will explore activity-dependent down-regulation of gene expression in the brain by confirming the presence of such genes through differential expression analysis, and by validating their potential molecular role through a BLAST search. The data was sourced from the NCBI GEO database (GEO Accession number GSE102827)
+
+Scientific Question: Are there neuron activity-dependent down-regulated genes in the brain, and, if so, what may the pathways these genes are involved in reveal about the role of gene down-regulation in brain development? 
+
+Hypothesis: If there are neuron activity-dependent up-regulated genes in the brain that have some known role in fine tuning processes involved in brain development, then there may also be genes that are down-regulated (whose transcription is reduced in response to some stimulus that depolarizes the neuron cell membrane), and whose protein products may be both important for brain development, and perhaps bear some similarity to known transcriptional repressors that would help shed light on the molecular mechanism of down-regulation. 
+
+Packages: 
+**DESeq2** - Used for differential gene expression analysis based on the negative binomial distribution;
+**RColorBrewer** - Useful for choosing a color scheme for figures;
+**tidyverse** - A collection of R packages designed for data science;
+**dplyr** - An easy to use tool for working with data frames and data manipulation;
+**ggplot2** - Used for the volcano plot, it's a package dedicated to data visualization;
+**Biostrings** - Used for efficient manipulation of large biological sequences or sets of sequences;
+**annotate** - used in the BLAST search;
+**rentrez** - for extracting a BLAST hit for dot plot
+
+```{r}
+# All the necessary libraries - install before loading the library using install.packages() if not already installed
+
+# Load library for DESeq2
+library(DESeq2)
+
+# Load library for RColorBrewer
+library(RColorBrewer)
+
+# Load library for tidyverse
+library(tidyverse)
+
+# Load library for dplyr
+library(dplyr)
+
+# Load library for ggplot2
+library(ggplot2)
+
+# Load library for Biostrings
+library(Biostrings)
+
+# Load library for annotate
+library(annotate)
+
+# Load library for rentrez
+library(rentrez)
+```
+
+**Bioinformatics Analyses Part 1: Differential Expression Analysis Using DESeq**
+This section uses differential expression analysis to identify down-regulated genes in response to activity. It takes in a matrix of raw counts from an RNA Seq experiment. The matrix is prepped for the analysis by removing any invalid values (e.g., NA values or categorical data such as gene names), and it runs differential analysis by comparing each of the time points post-stimulation to the 0 hr time point, as this represents the control (basal levels of RNA transcription in the absence of any external stimulus). The log2fold change is computed (difference in expression between the time point and the control), and is then plotted on a volcano plot along with the adjusted p-value to show the significance of the gene. 
+```{r}
+# Load in the raw counts matrix generated from an RNASeq experiment
+setwd('/Users/elenaassad/Desktop') # This line should be set to whatever directory the matrix is in 
+rawCounts <- read.csv("Bimm143Project2_RNAseq_rawCounts.csv") # Matrix with the raw counts from the RNA seq experiment
+
+# Clean up the data
+rawCounts <- rawCounts[,colSums(is.na(rawCounts))<nrow(rawCounts)] # Eliminate any NA values
+rownames(rawCounts) <- paste(rawCounts$gene, 1:nrow(rawCounts), sep = " ") # Set the row names to gene names
+rawCounts = subset(rawCounts, select = -c(gene)) # Remove categorical data (source: https://www.geeksforgeeks.org/drop-columns-by-name-from-a-given-dataframe-in-r/)
+rawCounts <- rawCounts[,grep("s4U", colnames(rawCounts))] # Select just for metabolically labeled transcripts
+
+# Create metadata necessary for DESeq Analysis
+metadata <- data.frame(sampleid = colnames(rawCounts), 
+                      KCl = c(rep("8h", times = 4), rep("6h", times = 4), rep("4h", times = 4),
+                              rep("2h", times = 4), rep("1.75h", times = 4), rep("1.5h", times = 4),
+                              rep("1.25h", times = 4), rep("1h", times = 4), rep("0.75h", times = 4),
+                              rep("0.5h", times = 4), rep("0.25h", times = 4), rep("0h", times = 4)),
+                      rep = rep(1:4, times = 12),
+                      treatment = c(rep("treated", times = 44), rep("untreated", times = 4)))
+
+# Perform DESeq Analysis
+dds <- DESeqDataSetFromMatrix(countData = as.matrix(rawCounts), 
+                              colData = metadata,
+                              design= ~ treatment)
+DESeqAnalysis <- DESeq(dds)
+res <- results(DESeqAnalysis, name="treatment_untreated_vs_treated") # Extract the results
+res <- as.data.frame(res) # Needed to generate logical column for volcano plot
+
+```
+
+**Plotting the Results Part 1: Volcano Plot**
+This section creates the volcano plot as a visualization tool for the RNA seq analysis results from above. We first generate a significance threshold to identify genes with significant differential expression from the control, then we create the volcano plot. 
+```{r}
+# Generate logical column - significance threshold
+res_all <- res %>% mutate(threshold = padj < 0.05)
+
+# Create volcano plot
+ggplot(res_all) + 
+        geom_point(aes(x = log2FoldChange, y = -log10(padj), color = threshold)) + 
+        xlab("log2 fold change") + 
+        ylab("-log10 adjusted p-value") + 
+        theme(legend.position = "none", 
+              plot.title = element_text(size = rel(1.5), hjust = 0.5), 
+              axis.title = element_text(size = rel(1.25)))
+```
+**Plotting the Results Part 2: MA Plot**
+This is a second visualization tool to view the differential expression analysis results. This backs up the results observed with the volcano plot. 
+```{r}
+# Clean up the data set to prepare for MA plot
+maplotData <- res_all[,-c(3,4,5,6)]
+
+# Create MA plot
+plotMA(maplotData)
+```
+
+
+**Bioinformatics Analyses Part 2: BLAST Search**
+This section identifies the top hit from the differential expression analysis by isolating the transcripts that are downregulated in response to activity (selects for the transcripts that have a negative log2FoldChange), any by re-organizing the data frame in ascending order by padj, in order to have the first row of the dataframe be the most significant down-regulated gene. This gene is then found on the NCBI database, and a BLAST search is done on it to find similar proteins that can be further researched to better characterize the potential role of down-regulation. 
+```{r}
+# Function that filters the data set in preparation for the BLAST search. Takes in the dataset of differentially expressed genes, selects for only the down-regulated genes by selecting the ones with a negative log2FoldChange, and lastly filters the genes by the p-value in ascending order to select the hit with the smallest p-value
+BLASTprep <- function(diffExpr) {
+  #Filter for only genes that have a negative log2FC (down-regulated genes)
+  diffExpr_downregulated <- diffExpr[grep("-", diffExpr$log2FoldChange),]
+  
+  # Re-order the genes by significance - smallest p-value at the top
+  diffExpr_downregulated_ordered <- diffExpr_downregulated[order(diffExpr_downregulated$padj),]
+  
+  return(diffExpr_downregulated_ordered)
+}
+
+# Prep the file for BLAST analysis
+res_all_downregulated_ordered <- BLASTprep(res_all)
+
+# Select top hit to run BLAST search on, and download FASTA file. In this case, the top hit was Nfil3. The species of interest is mus musculus. You can access the proper NCBI page for this gene at https://www.ncbi.nlm.nih.gov/nuccore/AF512511.1?report=graph and click on the "download" -> "download FASTA" -> "FASTA (Visible range)" options
+top_hit <- toString(readDNAStringSet("AF512511.1[1..1142].fa", format="fasta", nrec=-1L, skip=0L, seek.first.rec=FALSE, use.names=TRUE, with.qualities=FALSE))
+
+# Perform BLAST search
+blastSequences(top_hit, "nr", hitListSize="10", filter="L", expect="10", program="blastn", as=c("data.frame"))
+```
+
+**Discussion - Analyzing the Results:** The differential expression analysis shows that there are indeed down-regulated genes in response to activity. Out of the 16,894 genes included in this dataset, 8307 of them displayed reduced transcription compared to the 0 hr control (the control received no external stimulus), therefore roughly half of the validated activity-dependent genes are down-regulated. The MA plot further confirmed these results by showing a significant portion of the genes that are down-regulated, as seen by the genes located below the horizontal line across the plot. All the significant down-regulated genes highlighted in both the volcano plot and the MA plot open up future paths to further explore all these down-regulated genes, and the role they play in the brain. The BLAST search revealed many other protein hits that still fell under the Nfil gene family, indicating that to better explore these results it may be necessary to use longer sequences to get a more diverse list of proteins. For now, we know that Nfil3 was an important protein hit for down-regulation, and it stands for nuclear factor interleukin3. This is a protein previously known to be made by leukocytes, and has important roles in the regulation of the immune response. It is known that there are many cross-overs between brain development and immune response development, so this is definitely an interesting result to see.
+
+**References:**  
+AP-1 Transcription Figures and the BAF Complex Mediate Signal-Dependent Enhancer Selection. Vierbuchen et al., 2017. Molecular Cell  
+ARNT2 Tunes Activity-Dependent Gene Expression through NCoR2-Mediated Repression and NPAS4-Mediated Activation. Sharma et al., 2019. Neuron  
+Genome-wide identification and characterization of functional neuronal activity-dependent enhancers. Malik et al., 2014. Nature Neuroscience  
+Activity-dependent regulation of inhibitory synapse development by Npas4. Lin et al., 2008. Nature  
+Early-Life Gene Expression in Neurons Modulates Lasting Epigenetic States. Stroud et al., 2017. Cell
